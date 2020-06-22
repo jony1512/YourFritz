@@ -91,7 +91,7 @@
 # required shell commands                                                                             #
 #                                                                                                     #
 #######################################################################################################
-readonly required_commands=""
+readonly required_commands="sed expr cat mkdir rm rmdir cmp dd date mount umount base64 stat"
 #######################################################################################################
 #                                                                                                     #
 # common values                                                                                       #
@@ -473,7 +473,9 @@ get_system_branding()
 get_system_switch()
 (
 	[ -n "$2" ] && sed -n -e "s/^$system_select_name\t[01]\(.*\)\$/\1/p" "$1" && return
-	sed -n -e "s/^$system_select_name\t\([01]\).*\$/\1/p" "${1:-$urlader_environment}"
+	v=$(sed -n -e "s/^$system_select_name\t\([01]\).*\$/\1/p" "${1:-$urlader_environment}")
+	[ -z "$v" ] && v=0
+	printf "%u\n" "$v"
 )
 #######################################################################################################
 #                                                                                                     #
@@ -1022,6 +1024,57 @@ cleanup()
 }
 #######################################################################################################
 #                                                                                                     #
+# check dual-boot support                                                                             #
+#                                                                                                     #
+#######################################################################################################
+is_dualboot_supported()
+(
+	[ -z "$(get_partition "$kernel_name" "$inactive_name")" ] && exit 1
+	[ -z "$(get_partition "$filesystem_name" "$inactive_name")" ] && exit 1
+	[ -z "$(get_system_switch)" ] && exit 1
+	exit 0
+)
+#######################################################################################################
+#                                                                                                     #
+# collect data for running system and alternative partitions                                          #
+#                                                                                                     #
+#######################################################################################################
+collect_data()
+{
+	readonly running_version="$(get_system_version)"
+	readonly running_date="$(get_localized_system_date)"
+	readonly running_fsdate="$(get_modified_date)"
+	readonly running_modified="$(get_modified_by)"
+	chg_running_branding=0
+	running_branding_fixed=0
+	readonly current_branding="$(get_system_branding)"
+	readonly running_brandings="$(get_brandings)"
+	[ -z "$(get_fixed_branding)" ] || running_branding_fixed=1
+	[ $(count_of_items "$running_brandings") -gt 1 ] && chg_running_branding=1
+	readonly current_system_switch=$(get_system_switch)
+	alternative_is_missing=1
+	chg_alternative_branding=0
+	alternative_branding_fixed=0
+	if ! is_partition_empty "$(get_partition "$kernel_name" "$inactive_name")" && ! is_partition_empty "$(get_partition "$filesystem_name" "$inactive_name")" ; then
+		alternative_is_missing=0
+		spinlock get 10 && mp="$(printf "%s" "$(mount_alternative_system)")"
+		if ! [ -z "$mp" ]; then
+			readonly alternative_version="$(get_system_version "$mp")"
+			if ! [ -z "$alternative_version" ]; then
+				readonly alternative_date="$(get_localized_system_date "$mp")"
+				readonly alternative_fsdate="$(get_modified_date "$mp")"
+				readonly alternative_modified="$(get_modified_by "$mp")"
+				readonly alternative_brandings="$(get_brandings "$mp")"
+				[ -z "$(get_fixed_branding "$mp")" ] && alternative_branding_fixed=0 || alternative_branding_fixed=1
+				[ $(count_of_items "$alternative_brandings") -gt 1 ] && chg_alternative_branding=1
+			fi
+			dismount_alternative_system
+		fi
+		spinlock release
+	fi
+}
+#######################################################################################################
+#                                                                                                     #
 # implement 'get_values' action, if no cached data exists                                             #
 #                                                                                                     #
 #######################################################################################################
@@ -1063,57 +1116,6 @@ get_values()
 	printf "switch_branding_support=%s\n" "$cb_supported"
 	printf "current_switch_value=%s\n" "$current_system_switch"
 	printf "system_is_switched=%s\n" $(is_switched && printf "true" || printf "false")
-}
-#######################################################################################################
-#                                                                                                     #
-# check dual-boot support                                                                             #
-#                                                                                                     #
-#######################################################################################################
-is_dualboot_supported()
-(
-	[ -z "$(get_system_switch)" ] && exit 1
-	[ -z "$(get_partition "$kernel_name" "$inactive_name")" ] && exit 1
-	[ -z "$(get_partition "$filesystem_name" "$inactive_name")" ] && exit 1
-	exit 0
-)
-#######################################################################################################
-#                                                                                                     #
-# collect data for running system and alternative partitions                                          #
-#                                                                                                     #
-#######################################################################################################
-collect_data()
-{
-	readonly running_version="$(get_system_version)"
-	readonly running_date="$(get_localized_system_date)"
-	readonly running_fsdate="$(get_modified_date)"
-	readonly running_modified="$(get_modified_by)"
-	chg_running_branding=0
-	running_branding_fixed=0
-	readonly current_branding="$(get_system_branding)"
-	readonly running_brandings="$(get_brandings)"
-	[ -z "$(get_fixed_branding)" ] || running_branding_fixed=1
-	[ $(count_of_items "$running_brandings") -gt 1 ] && chg_running_branding=1
-	readonly current_system_switch=$(get_system_switch)
-	alternative_is_missing=1
-	chg_alternative_branding=0
-	alternative_branding_fixed=0
-	if ! is_partition_empty "$(get_partition "$kernel_name" "$inactive_name")" && ! is_partition_empty "$(get_partition "$filesystem_name" "$inactive_name")" ; then
-		alternative_is_missing=0
-		spinlock get 10 && mp="$(printf "%s" "$(mount_alternative_system)")"
-		if ! [ -z "$mp" ]; then
-			readonly alternative_version="$(get_system_version "$mp")"
-			if ! [ -z "$alternative_version" ]; then
-				readonly alternative_date="$(get_localized_system_date "$mp")"
-				readonly alternative_fsdate="$(get_modified_date "$mp")"
-				readonly alternative_modified="$(get_modified_by "$mp")"
-				readonly alternative_brandings="$(get_brandings "$mp")"
-				[ -z "$(get_fixed_branding "$mp")" ] && alternative_branding_fixed=0 || alternative_branding_fixed=1
-				[ $(count_of_items "$alternative_brandings") -gt 1 ] && chg_alternative_branding=1
-			fi
-			dismount_alternative_system
-		fi
-		spinlock release
-	fi
 }
 #######################################################################################################
 #                                                                                                     #
