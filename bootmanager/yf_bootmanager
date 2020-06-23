@@ -172,10 +172,11 @@ readonly ipq4019_cpuinfo_check="s|^model name[ \t]*: ARMv7 Processor rev 5 (v7l)
 #                                                                                                     #
 #######################################################################################################
 readonly wrapper_mount_name="wrapper"
+readonly wrapper_mount_prefix="mount:"
 readonly vr9_wrapper_dir="/wrapper"
 readonly vr9_rootfs_name="/filesystem_core.squashfs"
 readonly vr9_image_source_active="${vr9_wrapper_dir}${vr9_rootfs_name}"
-readonly vr9_image_source_inactive="mount:%s:${vr9_rootfs_name}"
+readonly vr9_image_source_inactive="$wrapper_mount_prefix%s:${vr9_rootfs_name}"
 ########################################################################################################
 #                                                                                                     #
 # Puma6 / Puma7 specific settings                                                                     #
@@ -479,6 +480,19 @@ get_system_switch()
 )
 #######################################################################################################
 #                                                                                                     #
+# check, whether the specified YAFFS2 partition contains data                                         #
+#                                                                                                     #
+# $1 - (block) device to check, with wrapper info surrounded                                          #
+#                                                                                                     #
+#######################################################################################################
+is_wrapper_partition_empty()
+(
+	part="${1#$wrapper_mount_prefix}"
+	part="${part%%:*}"
+	is_partition_empty "$part" && exit 0
+)
+#######################################################################################################
+#                                                                                                     #
 # check the first 256 byte of the specified partition - if they're all 0xFF or 0x00, there's usually  #
 # no content (and no complete alternative system installed )                                          #
 #                                                                                                     #
@@ -494,7 +508,11 @@ is_partition_empty()
 		done
 		return 0
 	}
-	dd if="$1" bs=256 count=1 2>"$orcus" | cmp -l - "$dev/zero" 2>"$orcus" | __read_bytes
+	if [ "${1#$wrapper_mount_prefix}" = "$1" ]; then
+		dd if="$1" bs=256 count=1 2>"$orcus" | cmp -l - "$dev/zero" 2>"$orcus" | __read_bytes
+	else
+		is_wrapper_partition_empty "$1"
+	fi
 )
 #######################################################################################################
 #                                                                                                     #
@@ -1055,7 +1073,9 @@ collect_data()
 	alternative_is_missing=1
 	chg_alternative_branding=0
 	alternative_branding_fixed=0
-	if ! is_partition_empty "$(get_partition "$kernel_name" "$inactive_name")" && ! is_partition_empty "$(get_partition "$filesystem_name" "$inactive_name")" ; then
+	is_partition_empty "$(get_partition "$kernel_name" "$inactive_name")" && nokernel=1 || nokernel=0
+	is_partition_empty "$(get_partition "$filesystem_name" "$inactive_name")" && nofs=1 || nofs=0
+	if [ $nokernel -eq 0 ] && [ $nofs -eq 0 ]; then
 		alternative_is_missing=0
 		spinlock get 10 && mp="$(printf "%s" "$(mount_alternative_system)")"
 		if ! [ -z "$mp" ]; then
@@ -1075,7 +1095,7 @@ collect_data()
 }
 #######################################################################################################
 #                                                                                                     #
-# implement 'get_values' action, if no cached data exists                                             #
+# gather information regarding the two systems                                                        #
 #                                                                                                     #
 #######################################################################################################
 get_values()
@@ -1163,8 +1183,8 @@ case "$1" in
 		printf "active system modification date = %s\n" "$(get_modified_date)"
 		printf "active system modification source = %s\n" "$(get_modified_by)"
 		printf "brandings supported on active system = %s%s\n" "$(get_brandings)" "$([ -z "$(get_fixed_branding)" ] || printf " (fixed)")"
-		is_partition_empty "$(get_partition "$filesystem_name" "$inactive_name")" && nofs=1 || nofs=0 
 		is_partition_empty "$(get_partition "$kernel_name" "$inactive_name")" && nokernel=1 || nokernel=0
+		is_partition_empty "$(get_partition "$filesystem_name" "$inactive_name")" && nofs=1 || nofs=0
 		printf "inactive kernel = %s\n" "$(get_partition "$kernel_name" "$inactive_name")"
 		printf "inactive filesystem = %s\n" "$(get_partition "$filesystem_name" "$inactive_name")"
 		if [ $nokernel -eq 0 ] && [ $nofs -eq 0 ]; then
@@ -1191,6 +1211,7 @@ case "$1" in
 			[ $nokernel -eq 1 ] && [ $nofs -eq 1 ] && printf "and "
 			[ $nofs -eq 1 ] && printf "inactive filesystem partition is empty"
 			[ $nokernel -eq 1 ] && [ $nofs -eq 1 ] && printf ", too"
+			printf "\n"
 		fi
 		rc=0
 		;;
