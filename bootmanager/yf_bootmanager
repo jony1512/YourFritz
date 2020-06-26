@@ -132,6 +132,10 @@ readonly backing_file_name="backing_file"
 readonly avm_rcconf="etc/init.d/rc.conf"
 readonly semafile="$rundir/$project_name.sem"
 readonly fdt_chosen="$proc/device-tree/chosen"
+readonly fixed_branding_anchor="export OEM"
+readonly yf_change_oem_marker="# YF_CHANGE_OEM"
+readonly yf_custom_environment_file="yf_custom_environment.sh"
+readonly yf_custom_environment_called_from="etc/inittab"
 #######################################################################################################
 #                                                                                                     #
 # various sources for version numbers                                                                 #
@@ -194,7 +198,7 @@ readonly puma_kernel_name_inactive="${kernel_name}_${reserved_prefix}_ATOM"
 #                                                                                                     #
 #######################################################################################################
 #                                                                                                     #
-# check, if all required commands are present, write missing names to STDERR                          #
+# check, whether all required commands are present, write missing names to STDERR                     #
 # (assume that 'printf' and 'command' are always available as builtins)                               #
 #                                                                                                     #
 #######################################################################################################
@@ -226,7 +230,7 @@ is_puma_based_device()
 )
 #######################################################################################################
 #                                                                                                     #
-# check, if the host system has a FDT based environment                                               #
+# check, whether the host system has a FDT based environment                                          #
 #                                                                                                     #
 #######################################################################################################
 has_fdt_environment()
@@ -235,13 +239,85 @@ has_fdt_environment()
 }
 #######################################################################################################
 #                                                                                                     #
-# check, if the host system supports branding changes via environment writes                          #
+# get native branding of device never mind, whether it's changeable or not                            #
+#                                                                                                     #
+#######################################################################################################
+get_native_branding()
+(
+	if has_fdt_environment; then
+		printf "%s\n" "$(cat $fdt_chosen/$branding_name)"
+	fi
+)
+#######################################################################################################
+#                                                                                                     #
+# get fixed brandings string from specified system root                                               #
+#                                                                                                     #
+# $1 - system root directory                                                                          #
+#                                                                                                     #
+#######################################################################################################
+get_fixed_branding()
+(
+	path="${1:-/}${1:+/}$avm_rcconf"
+	b="$(sed -n -e 's|^$fixed_branding_anchor\(=\"\?\(.*\)\"\?\)\?$|\2|p' "$path")"
+	printf "%s" "$b"
+	[ -z "$b" ] && exit 1 || exit 0
+)
+#######################################################################################################
+#                                                                                                     #
+# detect yf_custom_environment presence                                                               #
+#                                                                                                     #
+# $1 - system root directory                                                                          #
+#                                                                                                     #
+#######################################################################################################
+has_yf_custom_environment()
+{
+	path="${1:-/}${1:+/}$yf_custom_environment_called_from"
+	return 1
+}
+#######################################################################################################
+#                                                                                                     #
+# detect yf_change_oem presence                                                                       #
+#                                                                                                     #
+# $1 - system root directory                                                                          #
+#                                                                                                     #
+#######################################################################################################
+has_yf_change_oem()
+{
+	path="${1:-/}${1:+/}$avm_rcconf"
+	[ -z "$(sed -n -e 's|^\($yf_change_oem_marker\)\$|\1|p' "$path")" ] && return 1 || return 0
+}
+#######################################################################################################
+#                                                                                                     #
+# check, whether branding is fixed for the specified system                                           #
+#                                                                                                     #
+# $1 - system root directory                                                                          #
+#                                                                                                     #
+#######################################################################################################
+has_fixed_branding()
+{
+	[ -z "$(get_fixed_branding "$1")" ] && return 1 || return 0
+}
+#######################################################################################################
+#                                                                                                     #
+# check, whether any of the supported approaches to change 'firmware_version' is available            #
+#                                                                                                     #
+# $1 - system root directory                                                                          #
+#                                                                                                     #
+#######################################################################################################
+has_dynamic_branding()
+{
+	has_fixed_branding "$1" && return 1
+	has_yf_custom_environment "$1" && return 0
+	has_yf_change_oem "$1" && return 0
+}
+#######################################################################################################
+#                                                                                                     #
+# check, whether the host system supports branding changes                                            #
 #                                                                                                     #
 #######################################################################################################
 change_branding_support()
 {
-	has_fdt_environment && return 1
-	return 0
+	return 1
 }
 #######################################################################################################
 #                                                                                                     #
@@ -508,11 +584,11 @@ is_partition_empty()
 		done
 		return 0
 	}
-	if [ "${1#$wrapper_mount_prefix}" = "$1" ]; then
-		dd if="$1" bs=256 count=1 2>"$orcus" | cmp -l - "$dev/zero" 2>"$orcus" | __read_bytes
-	else
-		is_wrapper_partition_empty "$1"
-	fi
+	[ "${1#$wrapper_mount_prefix}" = "$1" ] \
+		&& \
+			dd if="$1" bs=256 count=1 2>"$orcus" | cmp -l - "$dev/zero" 2>"$orcus" | __read_bytes \
+		|| \
+			is_wrapper_partition_empty "$1"
 )
 #######################################################################################################
 #                                                                                                     #
@@ -751,20 +827,6 @@ get_system_date()
 get_localized_system_date()
 (
 	get_localized_date "$(get_system_date "$1")"
-)
-#######################################################################################################
-#                                                                                                     #
-# get fixed brandings string from specified system root                                               #
-#                                                                                                     #
-# $1 - system root directory                                                                          #
-#                                                                                                     #
-#######################################################################################################
-get_fixed_branding()
-(
-	path="${1:-/}${1:+/}$avm_rcconf"
-	b="$(sed -n -e 's|^export OEM\(=\"\?\(.*\)\"\?\)\?$|\2|p' "$path")"
-	printf "%s" "$b"
-	[ -z "$b" ] && exit 1 || exit 0
 )
 #######################################################################################################
 #                                                                                                     #
