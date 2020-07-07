@@ -246,6 +246,8 @@ get_native_branding()
 (
 	if has_fdt_environment; then
 		printf "%s\n" "$(cat $fdt_chosen/$branding_name)"
+	else
+		# TODO: detect branding from bootloader and whether it's changeable
 	fi
 )
 #######################################################################################################
